@@ -111,3 +111,6 @@ else()
   message(WARNING "Testing disabled. Could not find python3. If you have python3 installed try running "
 		  "cmake with -DPYTHON_EXECUTABLE:FILEPATH=/path/to/python3 to help it find the executable")
 endif()
+
+install(TARGETS spirv-cross
+    RUNTIME DESTINATION bin)
