@@ -1327,28 +1327,28 @@ void CompilerGLSL::replace_illegal_names()
 {
 	// clang-format off
 	static const unordered_set<string> keywords = {
-		"active", "asm", "atomic_uint", "attribute", "bool", "break", 
-		"bvec2", "bvec3", "bvec4", "case", "cast", "centroid", "class", "coherent", "common", "const", "continue", "default", "discard", 
-		"dmat2", "dmat2x2", "dmat2x3", "dmat2x4", "dmat3", "dmat3x2", "dmat3x3", "dmat3x4", "dmat4", "dmat4x2", "dmat4x3", "dmat4x4", 
-		"do", "double", "dvec2", "dvec3", "dvec4", "else", "enum", "extern", "external", "false", "filter", "fixed", "flat", "float", 
-		"for", "fvec2", "fvec3", "fvec4", "goto", "half", "highp", "hvec2", "hvec3", "hvec4", "if", "iimage1D", "iimage1DArray", 
-		"iimage2D", "iimage2DArray", "iimage2DMS", "iimage2DMSArray", "iimage2DRect", "iimage3D", "iimageBuffer", "iimageCube", 
-		"iimageCubeArray", "image1D", "image1DArray", "image2D", "image2DArray", "image2DMS", "image2DMSArray", "image2DRect", 
-		"image3D", "imageBuffer", "imageCube", "imageCubeArray", "in", "inline", "inout", "input", "int", "interface", "invariant", 
-		"isampler1D", "isampler1DArray", "isampler2D", "isampler2DArray", "isampler2DMS", "isampler2DMSArray", "isampler2DRect", 
-		"isampler3D", "isamplerBuffer", "isamplerCube", "isamplerCubeArray", "ivec2", "ivec3", "ivec4", "layout", "long", "lowp", 
-		"mat2", "mat2x2", "mat2x3", "mat2x4", "mat3", "mat3x2", "mat3x3", "mat3x4", "mat4", "mat4x2", "mat4x3", "mat4x4", "mediump", 
-		"namespace", "noinline", "noperspective", "out", "output", "packed", "partition", "patch", "precision", "public", "readonly", 
-		"resource", "restrict", "return", "row_major", "sample", "sampler1D", "sampler1DArray", "sampler1DArrayShadow", 
-		"sampler1DShadow", "sampler2D", "sampler2DArray", "sampler2DArrayShadow", "sampler2DMS", "sampler2DMSArray", 
-		"sampler2DRect", "sampler2DRectShadow", "sampler2DShadow", "sampler3D", "sampler3DRect", "samplerBuffer", 
-		"samplerCube", "samplerCubeArray", "samplerCubeArrayShadow", "samplerCubeShadow", "short", "sizeof", "smooth", "static", 
-		"struct", "subroutine", "superp", "switch", "template", "this", "true", "typedef", "uimage1D", "uimage1DArray", "uimage2D", 
-		"uimage2DArray", "uimage2DMS", "uimage2DMSArray", "uimage2DRect", "uimage3D", "uimageBuffer", "uimageCube", 
-		"uimageCubeArray", "uint", "uniform", "union", "unsigned", "usampler1D", "usampler1DArray", "usampler2D", "usampler2DArray", 
-		"usampler2DMS", "usampler2DMSArray", "usampler2DRect", "usampler3D", "usamplerBuffer", "usamplerCube", 
-		"usamplerCubeArray", "using", "uvec2", "uvec3", "uvec4", "varying", "vec2", "vec3", "vec4", "void", "volatile", "volatile", 
-		"while", "writeonly"
+		"active", "asm", "atomic_uint", "attribute", "bool", "break",
+		"bvec2", "bvec3", "bvec4", "case", "cast", "centroid", "class", "coherent", "common", "const", "continue", "default", "discard",
+		"dmat2", "dmat2x2", "dmat2x3", "dmat2x4", "dmat3", "dmat3x2", "dmat3x3", "dmat3x4", "dmat4", "dmat4x2", "dmat4x3", "dmat4x4",
+		"do", "double", "dvec2", "dvec3", "dvec4", "else", "enum", "extern", "external", "false", "filter", "fixed", "flat", "float",
+		"for", "fvec2", "fvec3", "fvec4", "goto", "half", "highp", "hvec2", "hvec3", "hvec4", "if", "iimage1D", "iimage1DArray",
+		"iimage2D", "iimage2DArray", "iimage2DMS", "iimage2DMSArray", "iimage2DRect", "iimage3D", "iimageBuffer", "iimageCube",
+		"iimageCubeArray", "image1D", "image1DArray", "image2D", "image2DArray", "image2DMS", "image2DMSArray", "image2DRect",
+		"image3D", "imageBuffer", "imageCube", "imageCubeArray", "in", "inline", "inout", "input", "int", "interface", "invariant",
+		"isampler1D", "isampler1DArray", "isampler2D", "isampler2DArray", "isampler2DMS", "isampler2DMSArray", "isampler2DRect",
+		"isampler3D", "isamplerBuffer", "isamplerCube", "isamplerCubeArray", "ivec2", "ivec3", "ivec4", "layout", "long", "lowp",
+		"mat2", "mat2x2", "mat2x3", "mat2x4", "mat3", "mat3x2", "mat3x3", "mat3x4", "mat4", "mat4x2", "mat4x3", "mat4x4", "mediump",
+		"namespace", "noinline", "noperspective", "out", "output", "packed", "partition", "patch", "precision", "public", "readonly",
+		"resource", "restrict", "return", "row_major", "sample", "sampler1D", "sampler1DArray", "sampler1DArrayShadow",
+		"sampler1DShadow", "sampler2D", "sampler2DArray", "sampler2DArrayShadow", "sampler2DMS", "sampler2DMSArray",
+		"sampler2DRect", "sampler2DRectShadow", "sampler2DShadow", "sampler3D", "sampler3DRect", "samplerBuffer",
+		"samplerCube", "samplerCubeArray", "samplerCubeArrayShadow", "samplerCubeShadow", "short", "sizeof", "smooth", "static",
+		"struct", "subroutine", "superp", "switch", "template", "this", "true", "typedef", "uimage1D", "uimage1DArray", "uimage2D",
+		"uimage2DArray", "uimage2DMS", "uimage2DMSArray", "uimage2DRect", "uimage3D", "uimageBuffer", "uimageCube",
+		"uimageCubeArray", "uint", "uniform", "union", "unsigned", "usampler1D", "usampler1DArray", "usampler2D", "usampler2DArray",
+		"usampler2DMS", "usampler2DMSArray", "usampler2DRect", "usampler3D", "usamplerBuffer", "usamplerCube",
+		"usamplerCubeArray", "using", "uvec2", "uvec3", "uvec4", "varying", "vec2", "vec3", "vec4", "void", "volatile", "volatile",
+		"while", "writeonly", "texture"
 	};
 	// clang-format on
 
@@ -1768,13 +1768,6 @@ string CompilerGLSL::to_func_call_arg(uint32_t id)
 
 void CompilerGLSL::handle_invalid_expression(uint32_t id)
 {
-	auto &expr = get<SPIRExpression>(id);
-
-	// This expression has been invalidated in the past.
-	// Be careful with this expression next pass ...
-	// Used for OpCompositeInsert forwarding atm.
-	expr.used_while_invalidated = true;
-
 	// We tried to read an invalidated expression.
 	// This means we need another pass at compilation, but next time, force temporary variables so that they cannot be invalidated.
 	forced_temporaries.insert(id);
@@ -2973,6 +2966,20 @@ string CompilerGLSL::to_function_name(uint32_t, const SPIRType &imgtype, bool is
 {
 	string fname;
 
+	// textureLod on sampler2DArrayShadow does not exist in GLSL for some reason.
+	// To emulate this, we will have to use textureGrad with a constant gradient of 0.
+	// The workaround will assert that the LOD is in fact constant 0, or we cannot emit correct code.
+	// This happens for HLSL SampleCmpLevelZero on Texture2DArray.
+	bool workaround_lod_array_shadow_as_grad = false;
+	if (imgtype.image.arrayed && imgtype.image.dim == Dim2D && imgtype.image.depth && lod)
+	{
+		auto *constant_lod = maybe_get<SPIRConstant>(lod);
+		if (!constant_lod || constant_lod->scalar_f32() != 0.0f)
+			SPIRV_CROSS_THROW(
+			    "textureLod on sampler2DArrayShadow is not constant 0.0. This cannot be expressed in GLSL.");
+		workaround_lod_array_shadow_as_grad = true;
+	}
+
 	if (is_fetch)
 		fname += "texelFetch";
 	else
@@ -2985,9 +2992,9 @@ string CompilerGLSL::to_function_name(uint32_t, const SPIRType &imgtype, bool is
 			fname += "Offsets";
 		if (is_proj)
 			fname += "Proj";
-		if (has_grad)
+		if (has_grad || workaround_lod_array_shadow_as_grad)
 			fname += "Grad";
-		if (!!lod)
+		if (!!lod && !workaround_lod_array_shadow_as_grad)
 			fname += "Lod";
 	}
 
@@ -2998,7 +3005,7 @@ string CompilerGLSL::to_function_name(uint32_t, const SPIRType &imgtype, bool is
 }
 
 // Returns the function args for a texture sampling function for the specified image and sampling characteristics.
-string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &, bool, bool, bool, uint32_t coord,
+string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &imgtype, bool, bool, bool, uint32_t coord,
                                       uint32_t coord_components, uint32_t dref, uint32_t grad_x, uint32_t grad_y,
                                       uint32_t lod, uint32_t coffset, uint32_t offset, uint32_t bias, uint32_t comp,
                                       uint32_t sample, bool *p_forward)
@@ -3030,7 +3037,12 @@ string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &, bool, bool
 	// Only enclose the UV expression if needed.
 	auto coord_expr = (*swizzle_expr == '\0') ? to_expression(coord) : (to_enclosed_expression(coord) + swizzle_expr);
 
-	// TODO: implement rest ... A bit intensive.
+	// textureLod on sampler2DArrayShadow does not exist in GLSL for some reason.
+	// To emulate this, we will have to use textureGrad with a constant gradient of 0.
+	// The workaround will assert that the LOD is in fact constant 0, or we cannot emit correct code.
+	// This happens for HLSL SampleCmpLevelZero on Texture2DArray.
+	bool workaround_lod_array_shadow_as_grad =
+	    imgtype.image.arrayed && imgtype.image.dim == Dim2D && imgtype.image.depth && lod;
 
 	if (dref)
 	{
@@ -3076,11 +3088,20 @@ string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &, bool, bool
 
 	if (lod)
 	{
-		if (check_explicit_lod_allowed(lod))
+		if (workaround_lod_array_shadow_as_grad)
 		{
-			forward = forward && should_forward(lod);
-			farg_str += ", ";
-			farg_str += to_expression(lod);
+			// Implement textureGrad() instead. LOD == 0.0 is implemented as gradient of 0.0.
+			// Implementing this as plain texture() is not safe on some implementations.
+			farg_str += ", vec2(0.0), vec2(0.0)";
+		}
+		else
+		{
+			if (check_explicit_lod_allowed(lod))
+			{
+				forward = forward && should_forward(lod);
+				farg_str += ", ";
+				farg_str += to_expression(lod);
+			}
 		}
 	}
 
@@ -4449,18 +4470,13 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 			auto lhs = to_expression(ops[0]);
 			auto rhs = to_expression(ops[1]);
 
-			// It is possible with OpLoad/OpCompositeInsert/OpStore that we get <expr> = <same-expr>.
-			// For this case, we don't need to invalidate anything and emit any opcode.
-			if (lhs != rhs)
-			{
-				// Tries to optimize assignments like "<lhs> = <lhs> op expr".
-				// While this is purely cosmetic, this is important for legacy ESSL where loop
-				// variable increments must be in either i++ or i += const-expr.
-				// Without this, we end up with i = i + 1, which is correct GLSL, but not correct GLES 2.0.
-				if (!optimize_read_modify_write(lhs, rhs))
-					statement(lhs, " = ", rhs, ";");
-				register_write(ops[0]);
-			}
+			// Tries to optimize assignments like "<lhs> = <lhs> op expr".
+			// While this is purely cosmetic, this is important for legacy ESSL where loop
+			// variable increments must be in either i++ or i += const-expr.
+			// Without this, we end up with i = i + 1, which is correct GLSL, but not correct GLES 2.0.
+			if (!optimize_read_modify_write(lhs, rhs))
+				statement(lhs, " = ", rhs, ";");
+			register_write(ops[0]);
 		}
 		break;
 	}
@@ -4704,26 +4720,12 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 
 		flush_variable_declaration(composite);
 
-		auto *expr = maybe_get<SPIRExpression>(id);
-		if ((expr && expr->used_while_invalidated) || !should_forward(composite))
-		{
-			// Make a copy, then use access chain to store the variable.
-			statement(declare_temporary(result_type, id), to_expression(composite), ";");
-			set<SPIRExpression>(id, to_name(id), result_type, true);
-			auto chain = access_chain_internal(id, elems, length, true);
-			statement(chain, " = ", to_expression(obj), ";");
-		}
-		else
-		{
-			auto chain = access_chain_internal(composite, elems, length, true);
-			statement(chain, " = ", to_expression(obj), ";");
-			set<SPIRExpression>(id, to_expression(composite), result_type, true);
+		// Make a copy, then use access chain to store the variable.
+		statement(declare_temporary(result_type, id), to_expression(composite), ";");
+		set<SPIRExpression>(id, to_name(id), result_type, true);
+		auto chain = access_chain_internal(id, elems, length, true);
+		statement(chain, " = ", to_expression(obj), ";");
 
-			register_write(composite);
-			register_read(id, composite, true);
-			// Invalidate the old expression we inserted into.
-			invalid_expressions.insert(composite);
-		}
 		break;
 	}
 
