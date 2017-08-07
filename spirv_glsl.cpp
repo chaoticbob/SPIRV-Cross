@@ -965,14 +965,30 @@ string CompilerGLSL::layout_for_variable(const SPIRVariable &var)
 
 	if (flags & (1ull << DecorationLocation))
 	{
-		uint64_t combined_decoration = 0;
-		for (uint32_t i = 0; i < meta[type.self].members.size(); i++)
-			combined_decoration |= combined_decoration_for_member(type, i);
+		bool can_use_varying_location = true;
 
-		// If our members have location decorations, we don't need to
-		// emit location decorations at the top as well (looks weird).
-		if ((combined_decoration & (1ull << DecorationLocation)) == 0)
-			attr.push_back(join("location = ", dec.location));
+		// Location specifiers are must have in SPIR-V, but they aren't really supported in earlier versions of GLSL.
+		// Be very explicit here about how to solve the issue.
+		if ((get_execution_model() != ExecutionModelVertex && var.storage == StorageClassInput) ||
+		    (get_execution_model() != ExecutionModelFragment && var.storage == StorageClassOutput))
+		{
+			if (!options.es && options.version < 410 && !options.separate_shader_objects)
+				can_use_varying_location = false;
+			else if (options.es && options.version < 310)
+				can_use_varying_location = false;
+		}
+
+		if (can_use_varying_location)
+		{
+			uint64_t combined_decoration = 0;
+			for (uint32_t i = 0; i < meta[type.self].members.size(); i++)
+				combined_decoration |= combined_decoration_for_member(type, i);
+
+			// If our members have location decorations, we don't need to
+			// emit location decorations at the top as well (looks weird).
+			if ((combined_decoration & (1ull << DecorationLocation)) == 0)
+				attr.push_back(join("location = ", dec.location));
+		}
 	}
 
 	// set = 0 is the default. Do not emit set = decoration in regular GLSL output, but
@@ -1562,6 +1578,23 @@ void CompilerGLSL::emit_declared_builtin_block(StorageClass storage, ExecutionMo
 	}
 }
 
+void CompilerGLSL::declare_undefined_values()
+{
+	bool emitted = false;
+	for (auto &id : ids)
+	{
+		if (id.get_type() != TypeUndef)
+			continue;
+
+		auto &undef = id.get<SPIRUndef>();
+		statement(variable_decl(get<SPIRType>(undef.basetype), to_name(undef.self), undef.self), ";");
+		emitted = true;
+	}
+
+	if (emitted)
+		statement("");
+}
+
 void CompilerGLSL::emit_resources()
 {
 	auto &execution = get_entry_point();
@@ -1756,6 +1789,8 @@ void CompilerGLSL::emit_resources()
 
 	if (emitted)
 		statement("");
+
+	declare_undefined_values();
 }
 
 // Returns a string representation of the ID, usable as a function arg.
@@ -2105,7 +2140,7 @@ string CompilerGLSL::constant_expression(const SPIRConstant &c)
 			if (subc.specialization && options.vulkan_semantics)
 				res += to_name(elem);
 			else
-				res += constant_expression(get<SPIRConstant>(elem));
+				res += constant_expression(subc);
 
 			if (&elem != &c.subconstants.back())
 				res += ", ";
@@ -3019,7 +3054,7 @@ string CompilerGLSL::to_function_name(uint32_t, const SPIRType &imgtype, bool is
 }
 
 // Returns the function args for a texture sampling function for the specified image and sampling characteristics.
-string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &imgtype, bool, bool, bool, uint32_t coord,
+string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &imgtype, bool, bool, bool is_proj, uint32_t coord,
                                       uint32_t coord_components, uint32_t dref, uint32_t grad_x, uint32_t grad_y,
                                       uint32_t lod, uint32_t coffset, uint32_t offset, uint32_t bias, uint32_t comp,
                                       uint32_t sample, bool *p_forward)
@@ -3070,6 +3105,35 @@ string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &imgtype, boo
 			farg_str += to_expression(coord);
 			farg_str += ", ";
 			farg_str += to_expression(dref);
+		}
+		else if (is_proj)
+		{
+			// Have to reshuffle so we get vec4(coord, dref, proj), special case.
+			// Other shading languages splits up the arguments for coord and compare value like SPIR-V.
+			// The coordinate type for textureProj shadow is always vec4 even for sampler1DShadow.
+			farg_str += ", vec4(";
+
+			if (imgtype.image.dim == Dim1D)
+			{
+				// Could reuse coord_expr, but we will mess up the temporary usage checking.
+				farg_str += to_enclosed_expression(coord) + ".x";
+				farg_str += ", ";
+				farg_str += "0.0, ";
+				farg_str += to_expression(dref);
+				farg_str += ", ";
+				farg_str += to_enclosed_expression(coord) + ".y)";
+			}
+			else if (imgtype.image.dim == Dim2D)
+			{
+				// Could reuse coord_expr, but we will mess up the temporary usage checking.
+				farg_str += to_enclosed_expression(coord) + (swizz_func ? ".xy()" : ".xy");
+				farg_str += ", ";
+				farg_str += to_expression(dref);
+				farg_str += ", ";
+				farg_str += to_enclosed_expression(coord) + ".z)";
+			}
+			else
+				SPIRV_CROSS_THROW("Invalid type for textureProj with shadow.");
 		}
 		else
 		{
@@ -5815,7 +5879,7 @@ string CompilerGLSL::to_member_name(const SPIRType &type, uint32_t index)
 	if (index < memb.size() && !memb[index].alias.empty())
 		return memb[index].alias;
 	else
-		return join("_", index);
+		return join("_m", index);
 }
 
 void CompilerGLSL::add_member_name(SPIRType &type, uint32_t index)

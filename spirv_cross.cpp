@@ -1533,17 +1533,26 @@ void Compiler::parse(const Instruction &instruction)
 		// types, which we shouldn't normally do.
 		// We should not normally have to consider type aliases like this to begin with
 		// however ... glslang issues #304, #307 cover this.
-		for (auto &other : global_struct_cache)
-		{
-			if (get_name(type.self) == get_name(other) && types_are_logically_equivalent(type, get<SPIRType>(other)))
-			{
-				type.type_alias = other;
-				break;
-			}
-		}
 
-		if (type.type_alias == 0)
-			global_struct_cache.push_back(id);
+		// For stripped names, never consider struct type aliasing.
+		// We risk declaring the same struct multiple times, but type-punning is not allowed
+		// so this is safe.
+		bool consider_aliasing = !get_name(type.self).empty();
+		if (consider_aliasing)
+		{
+			for (auto &other : global_struct_cache)
+			{
+				if (get_name(type.self) == get_name(other) &&
+				    types_are_logically_equivalent(type, get<SPIRType>(other)))
+				{
+					type.type_alias = other;
+					break;
+				}
+			}
+
+			if (type.type_alias == 0)
+				global_struct_cache.push_back(id);
+		}
 		break;
 	}
 
@@ -1638,6 +1647,14 @@ void Compiler::parse(const Instruction &instruction)
 	{
 		uint32_t id = ops[1];
 		set<SPIRConstant>(id, ops[0], uint32_t(1)).specialization = op == OpSpecConstantTrue;
+		break;
+	}
+
+	case OpConstantNull:
+	{
+		uint32_t id = ops[1];
+		uint32_t type = ops[0];
+		make_constant_null(id, type);
 		break;
 	}
 
@@ -3538,4 +3555,40 @@ bool Compiler::buffer_get_hlsl_counter_buffer(uint32_t id, uint32_t &counter_id)
 		}
 	}
 	return false;
+}
+
+void Compiler::make_constant_null(uint32_t id, uint32_t type)
+{
+	auto &constant_type = get<SPIRType>(type);
+
+	if (!constant_type.array.empty())
+	{
+		assert(constant_type.parent_type);
+		uint32_t parent_id = increase_bound_by(1);
+		make_constant_null(parent_id, constant_type.parent_type);
+
+		if (!constant_type.array_size_literal.back())
+			SPIRV_CROSS_THROW("Array size of OpConstantNull must be a literal.");
+
+		vector<uint32_t> elements(constant_type.array.back());
+		for (uint32_t i = 0; i < constant_type.array.back(); i++)
+			elements[i] = parent_id;
+		set<SPIRConstant>(id, type, elements.data(), elements.size());
+	}
+	else if (!constant_type.member_types.empty())
+	{
+		uint32_t member_ids = increase_bound_by(constant_type.member_types.size());
+		vector<uint32_t> elements(constant_type.member_types.size());
+		for (uint32_t i = 0; i < constant_type.member_types.size(); i++)
+		{
+			make_constant_null(member_ids + i, constant_type.member_types[i]);
+			elements[i] = member_ids + i;
+		}
+		set<SPIRConstant>(id, type, elements.data(), elements.size());
+	}
+	else
+	{
+		auto &constant = set<SPIRConstant>(id, type);
+		constant.make_null(constant_type);
+	}
 }
