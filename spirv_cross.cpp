@@ -475,6 +475,11 @@ bool Compiler::is_matrix(const SPIRType &type) const
 	return type.vecsize > 1 && type.columns > 1;
 }
 
+bool Compiler::is_array(const SPIRType &type) const
+{
+	return !type.array.empty();
+}
+
 ShaderResources Compiler::get_shader_resources() const
 {
 	return get_shader_resources(nullptr);
@@ -2923,7 +2928,8 @@ static bool exists_unaccessed_path_to_return(const CFG &cfg, uint32_t block, con
 }
 
 void Compiler::analyze_parameter_preservation(
-    SPIRFunction &entry, const CFG &cfg, const unordered_map<uint32_t, unordered_set<uint32_t>> &variable_to_blocks)
+    SPIRFunction &entry, const CFG &cfg, const unordered_map<uint32_t, unordered_set<uint32_t>> &variable_to_blocks,
+    const unordered_map<uint32_t, unordered_set<uint32_t>> &complete_write_blocks)
 {
 	for (auto &arg : entry.arguments)
 	{
@@ -2958,7 +2964,16 @@ void Compiler::analyze_parameter_preservation(
 			continue;
 		}
 
-		// If there is a path through the CFG where no block writes to the variable, the variable will be in an undefined state
+		// We have accessed a variable, but there was no complete writes to that variable.
+		// We deduce that we must preserve the argument.
+		itr = complete_write_blocks.find(arg.id);
+		if (itr == end(complete_write_blocks))
+		{
+			arg.read_count++;
+			continue;
+		}
+
+		// If there is a path through the CFG where no block completely writes to the variable, the variable will be in an undefined state
 		// when the function returns. We therefore need to implicitly preserve the variable in case there are writers in the function.
 		// Major case here is if a function is
 		// void foo(int &var) { if (cond) var = 10; }
@@ -3036,6 +3051,10 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 				auto *var = compiler.maybe_get_backing_variable(ptr);
 				if (var && var->storage == StorageClassFunction)
 					accessed_variables_to_block[var->self].insert(current_block->self);
+
+				// If we store through an access chain, we have a partial write.
+				if (var && var->self == ptr && var->storage == StorageClassFunction)
+					complete_write_variables_to_block[var->self].insert(current_block->self);
 				break;
 			}
 
@@ -3062,6 +3081,10 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 				auto *var = compiler.maybe_get_backing_variable(lhs);
 				if (var && var->storage == StorageClassFunction)
 					accessed_variables_to_block[var->self].insert(current_block->self);
+
+				// If we store through an access chain, we have a partial write.
+				if (var->self == lhs)
+					complete_write_variables_to_block[var->self].insert(current_block->self);
 
 				var = compiler.maybe_get_backing_variable(rhs);
 				if (var && var->storage == StorageClassFunction)
@@ -3103,6 +3126,10 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 					auto *var = compiler.maybe_get_backing_variable(args[i]);
 					if (var && var->storage == StorageClassFunction)
 						accessed_variables_to_block[var->self].insert(current_block->self);
+
+					// Cannot easily prove if argument we pass to a function is completely written.
+					// Usually, functions write to a dummy variable,
+					// which is then copied to in full to the real argument.
 				}
 				break;
 			}
@@ -3128,6 +3155,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 
 		Compiler &compiler;
 		std::unordered_map<uint32_t, std::unordered_set<uint32_t>> accessed_variables_to_block;
+		std::unordered_map<uint32_t, std::unordered_set<uint32_t>> complete_write_variables_to_block;
 		const SPIRBlock *current_block = nullptr;
 	} handler(*this);
 
@@ -3139,7 +3167,8 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 	CFG cfg(*this, entry);
 
 	// Analyze if there are parameters which need to be implicitly preserved with an "in" qualifier.
-	analyze_parameter_preservation(entry, cfg, handler.accessed_variables_to_block);
+	analyze_parameter_preservation(entry, cfg, handler.accessed_variables_to_block,
+	                               handler.complete_write_variables_to_block);
 
 	unordered_map<uint32_t, uint32_t> potential_loop_variables;
 
