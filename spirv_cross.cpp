@@ -249,6 +249,10 @@ SPIRVariable *Compiler::maybe_get_backing_variable(uint32_t chain)
 		auto *cexpr = maybe_get<SPIRExpression>(chain);
 		if (cexpr)
 			var = maybe_get<SPIRVariable>(cexpr->loaded_from);
+
+		auto *access_chain = maybe_get<SPIRAccessChain>(chain);
+		if (access_chain)
+			var = maybe_get<SPIRVariable>(access_chain->loaded_from);
 	}
 
 	return var;
@@ -283,6 +287,10 @@ void Compiler::register_write(uint32_t chain)
 		auto *expr = maybe_get<SPIRExpression>(chain);
 		if (expr && expr->loaded_from)
 			var = maybe_get<SPIRVariable>(expr->loaded_from);
+
+		auto *access_chain = maybe_get<SPIRAccessChain>(chain);
+		if (access_chain && access_chain->loaded_from)
+			var = maybe_get<SPIRVariable>(access_chain->loaded_from);
 	}
 
 	if (var)
@@ -359,6 +367,9 @@ uint32_t Compiler::expression_type_id(uint32_t id) const
 	case TypeCombinedImageSampler:
 		return get<SPIRCombinedImageSampler>(id).combined_type;
 
+	case TypeAccessChain:
+		return get<SPIRAccessChain>(id).basetype;
+
 	default:
 		SPIRV_CROSS_THROW("Cannot resolve expression type.");
 	}
@@ -394,6 +405,8 @@ bool Compiler::is_immutable(uint32_t id) const
 		bool pointer_to_const = var.storage == StorageClassUniformConstant;
 		return pointer_to_const || var.phi_variable || !expression_is_lvalue(id);
 	}
+	else if (ids[id].get_type() == TypeAccessChain)
+		return get<SPIRAccessChain>(id).immutable;
 	else if (ids[id].get_type() == TypeExpression)
 		return get<SPIRExpression>(id).immutable;
 	else if (ids[id].get_type() == TypeConstant || ids[id].get_type() == TypeConstantOp ||
@@ -1234,12 +1247,17 @@ void Compiler::parse(const Instruction &instruction)
 		uint32_t cap = ops[0];
 		if (cap == CapabilityKernel)
 			SPIRV_CROSS_THROW("Kernel capability not supported.");
+
+		declared_capabilities.push_back(static_cast<Capability>(ops[0]));
 		break;
 	}
 
 	case OpExtension:
-		// Ignore extensions
+	{
+		auto ext = extract_string(spirv, instruction.offset);
+		declared_extensions.push_back(move(ext));
 		break;
+	}
 
 	case OpExtInstImport:
 	{
@@ -3001,8 +3019,14 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 			const auto test_phi = [this, &block](uint32_t to) {
 				auto &next = compiler.get<SPIRBlock>(to);
 				for (auto &phi : next.phi_variables)
+				{
 					if (phi.parent == block.self)
+					{
 						accessed_variables_to_block[phi.function_variable].insert(block.self);
+						// Phi variables are also accessed in our target branch block.
+						accessed_variables_to_block[phi.function_variable].insert(next.self);
+					}
+				}
 			};
 
 			switch (block.terminator)
@@ -3396,6 +3420,9 @@ bool Compiler::ActiveBuiltinHandler::handle(spv::Op opcode, const uint32_t *args
 		if (!var)
 			break;
 
+		// Required if we access chain into builtins like gl_GlobalInvocationID.
+		add_if_builtin(args[2]);
+
 		auto *type = &compiler.get<SPIRType>(var->basetype);
 
 		// Start traversing type hierarchy at the proper non-pointer types.
@@ -3610,4 +3637,14 @@ void Compiler::make_constant_null(uint32_t id, uint32_t type)
 		auto &constant = set<SPIRConstant>(id, type);
 		constant.make_null(constant_type);
 	}
+}
+
+const std::vector<spv::Capability> &Compiler::get_declared_capabilities() const
+{
+	return declared_capabilities;
+}
+
+const std::vector<std::string> &Compiler::get_declared_extensions() const
+{
+	return declared_extensions;
 }
