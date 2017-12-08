@@ -447,9 +447,11 @@ struct CLIArguments
 	const char *cpp_interface_name = nullptr;
 	uint32_t version = 0;
 	uint32_t shader_model = 0;
+	uint32_t msl_version = 0;
 	bool es = false;
 	bool set_version = false;
 	bool set_shader_model = false;
+	bool set_msl_version = false;
 	bool set_es = false;
 	bool dump_resources = false;
 	bool force_temporary = false;
@@ -463,7 +465,10 @@ struct CLIArguments
 	vector<string> extensions;
 	vector<VariableTypeRemap> variable_type_remaps;
 	vector<InterfaceVariableRename> interface_variable_renames;
+	vector<HLSLVertexAttributeRemap> hlsl_attr_remap;
 	string entry;
+
+	vector<pair<string, string>> entry_point_rename;
 
 	uint32_t iterations = 1;
 	bool cpp = false;
@@ -483,7 +488,7 @@ static void print_help()
 	                "[--version <GLSL version>] [--dump-resources] [--help] [--force-temporary] "
 	                "[--vulkan-semantics] [--flatten-ubo] [--fixup-clipspace] [--flip-vert-y] [--iterations iter] "
 	                "[--cpp] [--cpp-interface-name <name>] "
-	                "[--msl] "
+	                "[--msl] [--msl-version <MMmmpp>]"
 	                "[--hlsl] [--shader-model] [--hlsl-enable-compat] "
 	                "[--separate-shader-objects]"
 	                "[--pls-in format input-name] [--pls-out format output-name] [--remap source_name target_name "
@@ -491,6 +496,8 @@ static void print_help()
 	                "[--flatten-multidimensional-arrays] [--no-420pack-extension] "
 	                "[--remap-variable-type <variable_name> <new_variable_type>] "
 	                "[--rename-interface-variable <in|out> <location> <new_variable_name>] "
+	                "[--set-hlsl-vertex-input-semantic <location> <semantic>] "
+	                "[--rename-entry-point <old> <new>] "
 	                "\n");
 }
 
@@ -590,6 +597,17 @@ void rename_interface_variable(Compiler &compiler, const vector<Resource> &resou
 		if (loc != rename.location)
 			continue;
 
+		auto &type = compiler.get_type(v.base_type_id);
+
+		// This is more of a friendly variant. If we need to rename interface variables, we might have to rename
+		// structs as well and make sure all the names match up.
+		if (type.basetype == SPIRType::Struct)
+		{
+			compiler.set_name(v.base_type_id, join("SPIRV_Cross_Interface_Location", rename.location));
+			for (uint32_t i = 0; i < uint32_t(type.member_types.size()); i++)
+				compiler.set_member_name(v.base_type_id, i, join("InterfaceMember", i));
+		}
+
 		compiler.set_name(v.id, rename.variable_name);
 	}
 }
@@ -633,8 +651,20 @@ static int main_inner(int argc, char *argv[])
 	cbs.add("--flatten-multidimensional-arrays", [&args](CLIParser &) { args.flatten_multidimensional_arrays = true; });
 	cbs.add("--no-420pack-extension", [&args](CLIParser &) { args.use_420pack_extension = false; });
 	cbs.add("--extension", [&args](CLIParser &parser) { args.extensions.push_back(parser.next_string()); });
+	cbs.add("--rename-entry-point", [&args](CLIParser &parser) {
+		auto old_name = parser.next_string();
+		auto new_name = parser.next_string();
+		args.entry_point_rename.push_back({ old_name, new_name });
+	});
 	cbs.add("--entry", [&args](CLIParser &parser) { args.entry = parser.next_string(); });
 	cbs.add("--separate-shader-objects", [&args](CLIParser &) { args.sso = true; });
+	cbs.add("--set-hlsl-vertex-input-semantic", [&args](CLIParser &parser) {
+		HLSLVertexAttributeRemap remap;
+		remap.location = parser.next_uint();
+		remap.semantic = parser.next_string();
+		args.hlsl_attr_remap.push_back(move(remap));
+	});
+
 	cbs.add("--remap", [&args](CLIParser &parser) {
 		string src = parser.next_string();
 		string dst = parser.next_string();
@@ -675,6 +705,10 @@ static int main_inner(int argc, char *argv[])
 		args.shader_model = parser.next_uint();
 		args.set_shader_model = true;
 	});
+	cbs.add("--msl-version", [&args](CLIParser &parser) {
+		args.msl_version = parser.next_uint();
+		args.set_msl_version = true;
+	});
 
 	cbs.add("--remove-unused-variables", [&args](CLIParser &) { args.remove_unused = true; });
 
@@ -714,6 +748,8 @@ static int main_inner(int argc, char *argv[])
 
 		auto *msl_comp = static_cast<CompilerMSL *>(compiler.get());
 		auto msl_opts = msl_comp->get_options();
+		if (args.set_msl_version)
+			msl_opts.msl_version = args.msl_version;
 		msl_comp->set_options(msl_opts);
 	}
 	else if (args.hlsl)
@@ -734,6 +770,9 @@ static int main_inner(int argc, char *argv[])
 
 		compiler->set_variable_type_remap_callback(move(remap_cb));
 	}
+
+	for (auto &rename : args.entry_point_rename)
+		compiler->rename_entry_point(rename.first, rename.second);
 
 	if (!args.entry.empty())
 		compiler->set_entry_point(args.entry);
@@ -853,7 +892,12 @@ static int main_inner(int argc, char *argv[])
 
 	string glsl;
 	for (uint32_t i = 0; i < args.iterations; i++)
-		glsl = compiler->compile();
+	{
+		if (args.hlsl)
+			glsl = static_cast<CompilerHLSL *>(compiler.get())->compile(move(args.hlsl_attr_remap));
+		else
+			glsl = compiler->compile();
+	}
 
 	if (args.output)
 		write_string_to_file(args.output, glsl.c_str());
