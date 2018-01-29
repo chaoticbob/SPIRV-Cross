@@ -3129,48 +3129,27 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 						accessed_variables_to_block[phi.function_variable].insert(block.self);
 						// Phi variables are also accessed in our target branch block.
 						accessed_variables_to_block[phi.function_variable].insert(next.self);
+
+						notify_variable_access(phi.local_variable, block.self);
 					}
 				}
 			};
 
-			// A Phi node might be reading other phi variables as input, so check for this as well.
-			for (auto &phi : block.phi_variables)
-			{
-				if (id_is_phi_variable(phi.local_variable))
-					accessed_variables_to_block[phi.local_variable].insert(block.self);
-				else
-				{
-					// Temporary variable, due to potential issues with scoping,
-					// always declare these variables up-front in the entry block.
-					if (!compiler.hoisted_temporaries.count(phi.local_variable))
-					{
-						auto *undef = compiler.maybe_get<SPIRUndef>(phi.local_variable);
-						// Undef variables are declared as global variables without initializer.
-						// Never declare these variables.
-						if (!undef)
-						{
-							auto &var = compiler.get<SPIRVariable>(phi.function_variable);
-							auto &entry_block = compiler.get<SPIRBlock>(entry.entry_block);
-							entry_block.declare_temporary.emplace_back(var.basetype, phi.local_variable);
-							compiler.hoisted_temporaries.insert(phi.local_variable);
-							compiler.forced_temporaries.insert(phi.local_variable);
-						}
-					}
-				}
-			}
-
 			switch (block.terminator)
 			{
 			case SPIRBlock::Direct:
+				notify_variable_access(block.condition, block.self);
 				test_phi(block.next_block);
 				break;
 
 			case SPIRBlock::Select:
+				notify_variable_access(block.condition, block.self);
 				test_phi(block.true_block);
 				test_phi(block.false_block);
 				break;
 
 			case SPIRBlock::MultiSelect:
+				notify_variable_access(block.condition, block.self);
 				for (auto &target : block.cases)
 					test_phi(target.block);
 				if (block.default_block)
@@ -3182,6 +3161,14 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 			}
 		}
 
+		void notify_variable_access(uint32_t id, uint32_t block)
+		{
+			if (id_is_phi_variable(id))
+				accessed_variables_to_block[id].insert(block);
+			else if (id_is_potential_temporary(id))
+				accessed_temporaries_to_block[id].insert(block);
+		}
+
 		bool id_is_phi_variable(uint32_t id)
 		{
 			if (id >= compiler.get_current_id_bound())
@@ -3190,8 +3177,22 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 			return var && var->phi_variable;
 		}
 
+		bool id_is_potential_temporary(uint32_t id)
+		{
+			if (id >= compiler.get_current_id_bound())
+				return false;
+
+			// Temporaries are not created before we start emitting code.
+			return compiler.ids[id].empty() || (compiler.ids[id].get_type() == TypeExpression);
+		}
+
 		bool handle(spv::Op op, const uint32_t *args, uint32_t length)
 		{
+			// Keep track of the types of temporaries, so we can hoist them out as necessary.
+			uint32_t result_type, result_id;
+			if (compiler.instruction_to_result_type(result_type, result_id, op, args, length))
+				result_id_to_type[result_id] = result_type;
+
 			switch (op)
 			{
 			case OpStore:
@@ -3209,8 +3210,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 					complete_write_variables_to_block[var->self].insert(current_block->self);
 
 				// Might try to store a Phi variable here.
-				if (id_is_phi_variable(args[1]))
-					accessed_variables_to_block[args[1]].insert(current_block->self);
+				notify_variable_access(args[1], current_block->self);
 				break;
 			}
 
@@ -3226,8 +3226,9 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 					accessed_variables_to_block[var->self].insert(current_block->self);
 
 				for (uint32_t i = 3; i < length; i++)
-					if (id_is_phi_variable(args[i]))
-						accessed_variables_to_block[args[i]].insert(current_block->self);
+					notify_variable_access(args[i], current_block->self);
+
+				// The result of an access chain is a fixed expression and is not really considered a temporary.
 				break;
 			}
 
@@ -3262,8 +3263,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 					accessed_variables_to_block[var->self].insert(current_block->self);
 
 				// Might try to copy a Phi variable here.
-				if (id_is_phi_variable(args[2]))
-					accessed_variables_to_block[args[2]].insert(current_block->self);
+				notify_variable_access(args[2], current_block->self);
 				break;
 			}
 
@@ -3275,6 +3275,9 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 				auto *var = compiler.maybe_get_backing_variable(ptr);
 				if (var && var->storage == StorageClassFunction)
 					accessed_variables_to_block[var->self].insert(current_block->self);
+
+				// Loaded value is a temporary.
+				notify_variable_access(args[1], current_block->self);
 				break;
 			}
 
@@ -3296,17 +3299,19 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 					// which is then copied to in full to the real argument.
 
 					// Might try to copy a Phi variable here.
-					if (id_is_phi_variable(args[i]))
-						accessed_variables_to_block[args[i]].insert(current_block->self);
+					notify_variable_access(args[i], current_block->self);
 				}
+
+				// Return value may be a temporary.
+				notify_variable_access(args[1], current_block->self);
 				break;
 			}
 
 			case OpExtInst:
 			{
 				for (uint32_t i = 4; i < length; i++)
-					if (id_is_phi_variable(args[i]))
-						accessed_variables_to_block[args[i]].insert(current_block->self);
+					notify_variable_access(args[i], current_block->self);
+				notify_variable_access(args[1], current_block->self);
 				break;
 			}
 
@@ -3317,6 +3322,19 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 				// Atomics shouldn't be able to access function-local variables.
 				// Some GLSL builtins access a pointer.
 
+			case OpCompositeInsert:
+			case OpVectorShuffle:
+				// Specialize for opcode which contains literals.
+				for (uint32_t i = 1; i < 4; i++)
+					notify_variable_access(args[i], current_block->self);
+				break;
+
+			case OpCompositeExtract:
+				// Specialize for opcode which contains literals.
+				for (uint32_t i = 1; i < 3; i++)
+					notify_variable_access(args[i], current_block->self);
+				break;
+
 			default:
 			{
 				// Rather dirty way of figuring out where Phi variables are used.
@@ -3326,8 +3344,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 				// but worst case, it does not affect the correctness of the compile.
 				// Exhaustive analysis would be better here, but it's not worth it for now.
 				for (uint32_t i = 0; i < length; i++)
-					if (id_is_phi_variable(args[i]))
-						accessed_variables_to_block[args[i]].insert(current_block->self);
+					notify_variable_access(args[i], current_block->self);
 				break;
 			}
 			}
@@ -3337,6 +3354,8 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 		Compiler &compiler;
 		SPIRFunction &entry;
 		std::unordered_map<uint32_t, std::unordered_set<uint32_t>> accessed_variables_to_block;
+		std::unordered_map<uint32_t, std::unordered_set<uint32_t>> accessed_temporaries_to_block;
+		std::unordered_map<uint32_t, uint32_t> result_id_to_type;
 		std::unordered_map<uint32_t, std::unordered_set<uint32_t>> complete_write_variables_to_block;
 		const SPIRBlock *current_block = nullptr;
 	} handler(*this, entry);
@@ -3406,6 +3425,52 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 		}
 	}
 
+	for (auto &var : handler.accessed_temporaries_to_block)
+	{
+		auto itr = handler.result_id_to_type.find(var.first);
+
+		if (itr == end(handler.result_id_to_type))
+		{
+			// We found a false positive ID being used, ignore.
+			// This should probably be an assert.
+			continue;
+		}
+
+		DominatorBuilder builder(cfg);
+
+		// Figure out which block is dominating all accesses of those temporaries.
+		auto &blocks = var.second;
+		for (auto &block : blocks)
+		{
+			builder.add_block(block);
+
+			// If a temporary is used in more than one block, we might have to lift continue block
+			// access up to loop header like we did for variables.
+			if (blocks.size() != 1 && this->is_continue(block))
+				builder.add_block(continue_block_to_loop_header[block]);
+		}
+
+		uint32_t dominating_block = builder.get_dominator();
+		if (dominating_block)
+		{
+			// If we touch a variable in the dominating block, this is the expected setup.
+			// SPIR-V normally mandates this, but we have extra cases for temporary use inside loops.
+			bool first_use_is_dominator = blocks.count(dominating_block) != 0;
+
+			if (!first_use_is_dominator)
+			{
+				// This should be very rare, but if we try to declare a temporary inside a loop,
+				// and that temporary is used outside the loop as well (spirv-opt inliner likes this)
+				// we should actually emit the temporary outside the loop.
+				hoisted_temporaries.insert(var.first);
+				forced_temporaries.insert(var.first);
+
+				auto &block_temporaries = get<SPIRBlock>(dominating_block).declare_temporary;
+				block_temporaries.emplace_back(handler.result_id_to_type[var.first], var.first);
+			}
+		}
+	}
+
 	unordered_set<uint32_t> seen_blocks;
 
 	// Now, try to analyze whether or not these variables are actually loop variables.
@@ -3438,6 +3503,10 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 
 		assert(header);
 		auto &header_block = this->get<SPIRBlock>(header);
+		auto &blocks = handler.accessed_variables_to_block[loop_variable.first];
+
+		// If a loop variable is not used before the loop, it's probably not a loop variable.
+		bool has_accessed_variable = blocks.count(header) != 0;
 
 		// Now, there are two conditions we need to meet for the variable to be a loop variable.
 		// 1. The dominating block must have a branch-free path to the loop header,
@@ -3448,6 +3517,9 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 		bool static_loop_init = true;
 		while (dominator != header)
 		{
+			if (blocks.count(dominator) != 0)
+				has_accessed_variable = true;
+
 			auto &succ = cfg.get_succeeding_edges(dominator);
 			if (succ.size() != 1)
 			{
@@ -3465,12 +3537,11 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 			dominator = succ.front();
 		}
 
-		if (!static_loop_init)
+		if (!static_loop_init || !has_accessed_variable)
 			continue;
 
 		// The second condition we need to meet is that no access after the loop
 		// merge can occur. Walk the CFG to see if we find anything.
-		auto &blocks = handler.accessed_variables_to_block[loop_variable.first];
 
 		seen_blocks.clear();
 		cfg.walk_from(seen_blocks, header_block.merge_block, [&](uint32_t walk_block) {
@@ -3842,5 +3913,45 @@ std::string Compiler::get_remapped_declared_block_name(uint32_t id) const
 		auto &type = get<SPIRType>(var.basetype);
 		auto &block_name = meta[type.self].decoration.alias;
 		return block_name.empty() ? get_block_fallback_name(id) : block_name;
+	}
+}
+
+bool Compiler::instruction_to_result_type(uint32_t &result_type, uint32_t &result_id, spv::Op op, const uint32_t *args,
+                                          uint32_t length)
+{
+	// Most instructions follow the pattern of <result-type> <result-id> <arguments>.
+	// There are some exceptions.
+	switch (op)
+	{
+	case OpStore:
+	case OpCopyMemory:
+	case OpCopyMemorySized:
+	case OpImageWrite:
+	case OpAtomicStore:
+	case OpAtomicFlagClear:
+	case OpEmitStreamVertex:
+	case OpEndStreamPrimitive:
+	case OpControlBarrier:
+	case OpMemoryBarrier:
+	case OpGroupWaitEvents:
+	case OpRetainEvent:
+	case OpReleaseEvent:
+	case OpSetUserEventStatus:
+	case OpCaptureEventProfilingInfo:
+	case OpCommitReadPipe:
+	case OpCommitWritePipe:
+	case OpGroupCommitReadPipe:
+	case OpGroupCommitWritePipe:
+		return false;
+
+	default:
+		if (length > 1)
+		{
+			result_type = args[0];
+			result_id = args[1];
+			return true;
+		}
+		else
+			return false;
 	}
 }

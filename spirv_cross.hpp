@@ -744,6 +744,9 @@ protected:
 	std::vector<spv::Capability> declared_capabilities;
 	std::vector<std::string> declared_extensions;
 	std::unordered_map<uint32_t, std::string> declared_block_names;
+
+	bool instruction_to_result_type(uint32_t &result_type, uint32_t &result_id, spv::Op op, const uint32_t *args,
+	                                uint32_t length);
 };
 }
 
