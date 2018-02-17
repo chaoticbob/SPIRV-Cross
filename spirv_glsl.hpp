@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017 ARM Limited
+ * Copyright 2015-2018 ARM Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 #define SPIRV_CROSS_GLSL_HPP
 
 #include "spirv_cross.hpp"
+#include <limits>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -202,7 +203,7 @@ protected:
 	virtual std::string type_to_glsl(const SPIRType &type, uint32_t id = 0);
 	virtual std::string builtin_to_glsl(spv::BuiltIn builtin, spv::StorageClass storage);
 	virtual void emit_struct_member(const SPIRType &type, uint32_t member_type_id, uint32_t index,
-	                                const std::string &qualifier = "");
+	                                const std::string &qualifier = "", uint32_t base_offset = 0);
 	virtual std::string image_type_glsl(const SPIRType &type, uint32_t id = 0);
 	virtual std::string constant_expression(const SPIRConstant &c);
 	std::string constant_op_expression(const SPIRConstantOp &cop);
@@ -298,7 +299,7 @@ protected:
 	virtual bool is_non_native_row_major_matrix(uint32_t id);
 	virtual bool member_is_non_native_row_major_matrix(const SPIRType &type, uint32_t index);
 	bool member_is_packed_type(const SPIRType &type, uint32_t index) const;
-	virtual std::string convert_row_major_matrix(std::string exp_str, const SPIRType &exp_type);
+	virtual std::string convert_row_major_matrix(std::string exp_str, const SPIRType &exp_type, bool is_packed);
 
 	std::unordered_set<std::string> local_variable_names;
 	std::unordered_set<std::string> resource_names;
@@ -323,12 +324,15 @@ protected:
 		bool use_initializer_list = false;
 		bool use_typed_initializer_list = false;
 		bool can_declare_struct_inline = true;
+		bool can_declare_arrays_inline = true;
 		bool native_row_major_matrix = true;
 		bool use_constructor_splatting = true;
 		bool boolean_mix_support = true;
 		bool allow_precision_qualifiers = false;
 		bool can_swizzle_scalar = false;
 		bool force_gl_in_out_block = false;
+		bool can_return_array = true;
+		bool allow_truncated_access_chain = false;
 	} backend;
 
 	void emit_struct(SPIRType &type);
@@ -422,8 +426,10 @@ protected:
 	std::string layout_for_variable(const SPIRVariable &variable);
 	std::string to_combined_image_sampler(uint32_t image_id, uint32_t samp_id);
 	virtual bool skip_argument(uint32_t id) const;
+	virtual void emit_array_copy(const std::string &lhs, uint32_t rhs_id);
 
-	bool buffer_is_packing_standard(const SPIRType &type, BufferPackingStandard packing);
+	bool buffer_is_packing_standard(const SPIRType &type, BufferPackingStandard packing, uint32_t start_offset = 0,
+	                                uint32_t end_offset = std::numeric_limits<uint32_t>::max());
 	uint32_t type_to_packed_base_size(const SPIRType &type, BufferPackingStandard packing);
 	uint32_t type_to_packed_alignment(const SPIRType &type, uint64_t flags, BufferPackingStandard packing);
 	uint32_t type_to_packed_array_stride(const SPIRType &type, uint64_t flags, BufferPackingStandard packing);

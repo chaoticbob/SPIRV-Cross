@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017 ARM Limited
+ * Copyright 2015-2018 ARM Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -3244,7 +3244,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 					accessed_variables_to_block[var->self].insert(current_block->self);
 
 				// If we store through an access chain, we have a partial write.
-				if (var->self == lhs)
+				if (var && var->self == lhs)
 					complete_write_variables_to_block[var->self].insert(current_block->self);
 
 				var = compiler.maybe_get_backing_variable(rhs);
@@ -3368,8 +3368,8 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 	CFG cfg(*this, entry);
 
 	// Analyze if there are parameters which need to be implicitly preserved with an "in" qualifier.
-	analyze_parameter_preservation(entry, cfg, handler.accessed_variables_to_block,
-	                               handler.complete_write_variables_to_block);
+	this->analyze_parameter_preservation(entry, cfg, handler.accessed_variables_to_block,
+	                                     handler.complete_write_variables_to_block);
 
 	unordered_map<uint32_t, uint32_t> potential_loop_variables;
 
@@ -3393,7 +3393,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 				// The continue block is dominated by the inner part of the loop, which does not make sense in high-level
 				// language output because it will be declared before the body,
 				// so we will have to lift the dominator up to the relevant loop header instead.
-				builder.add_block(continue_block_to_loop_header[block]);
+				builder.add_block(this->continue_block_to_loop_header[block]);
 
 				if (type.vecsize == 1 && type.columns == 1)
 				{
@@ -3447,7 +3447,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 			// If a temporary is used in more than one block, we might have to lift continue block
 			// access up to loop header like we did for variables.
 			if (blocks.size() != 1 && this->is_continue(block))
-				builder.add_block(continue_block_to_loop_header[block]);
+				builder.add_block(this->continue_block_to_loop_header[block]);
 		}
 
 		uint32_t dominating_block = builder.get_dominator();
@@ -3462,10 +3462,10 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 				// This should be very rare, but if we try to declare a temporary inside a loop,
 				// and that temporary is used outside the loop as well (spirv-opt inliner likes this)
 				// we should actually emit the temporary outside the loop.
-				hoisted_temporaries.insert(var.first);
-				forced_temporaries.insert(var.first);
+				this->hoisted_temporaries.insert(var.first);
+				this->forced_temporaries.insert(var.first);
 
-				auto &block_temporaries = get<SPIRBlock>(dominating_block).declare_temporary;
+				auto &block_temporaries = this->get<SPIRBlock>(dominating_block).declare_temporary;
 				block_temporaries.emplace_back(handler.result_id_to_type[var.first], var.first);
 			}
 		}
@@ -3752,11 +3752,13 @@ bool Compiler::has_active_builtin(BuiltIn builtin, StorageClass storage)
 	return flags & (1ull << builtin);
 }
 
-void Compiler::analyze_sampler_comparison_states()
+void Compiler::analyze_image_and_sampler_usage()
 {
 	CombinedImageSamplerUsageHandler handler(*this);
 	traverse_all_reachable_opcodes(get<SPIRFunction>(entry_point), handler);
 	comparison_samplers = move(handler.comparison_samplers);
+	comparison_images = move(handler.comparison_images);
+	need_subpass_input = handler.need_subpass_input;
 }
 
 bool Compiler::CombinedImageSamplerUsageHandler::begin_function_scope(const uint32_t *args, uint32_t length)
@@ -3775,6 +3777,14 @@ bool Compiler::CombinedImageSamplerUsageHandler::begin_function_scope(const uint
 	}
 
 	return true;
+}
+
+void Compiler::CombinedImageSamplerUsageHandler::add_hierarchy_to_comparison_images(uint32_t image)
+{
+	// Traverse the variable dependency hierarchy and tag everything in its path with comparison images.
+	comparison_images.insert(image);
+	for (auto &img : dependency_hierarchy[image])
+		add_hierarchy_to_comparison_images(img);
 }
 
 void Compiler::CombinedImageSamplerUsageHandler::add_hierarchy_to_comparison_samplers(uint32_t sampler)
@@ -3796,6 +3806,12 @@ bool Compiler::CombinedImageSamplerUsageHandler::handle(Op opcode, const uint32_
 		if (length < 3)
 			return false;
 		dependency_hierarchy[args[1]].insert(args[2]);
+
+		// Ideally defer this to OpImageRead, but then we'd need to track loaded IDs.
+		// If we load an image, we're going to use it and there is little harm in declaring an unused gl_FragCoord.
+		auto &type = compiler.get<SPIRType>(args[0]);
+		if (type.image.dim == DimSubpassData)
+			need_subpass_input = true;
 		break;
 	}
 
@@ -3808,6 +3824,10 @@ bool Compiler::CombinedImageSamplerUsageHandler::handle(Op opcode, const uint32_
 		auto &type = compiler.get<SPIRType>(result_type);
 		if (type.image.depth)
 		{
+			// This image must be a depth image.
+			uint32_t image = args[2];
+			add_hierarchy_to_comparison_images(image);
+
 			// This sampler must be a SamplerComparisionState, and not a regular SamplerState.
 			uint32_t sampler = args[3];
 			add_hierarchy_to_comparison_samplers(sampler);
