@@ -15,6 +15,7 @@
  */
 
 #include "spirv_cpp.hpp"
+#include "spirv_cross_util.hpp"
 #include "spirv_glsl.hpp"
 #include "spirv_hlsl.hpp"
 #include "spirv_msl.hpp"
@@ -211,7 +212,7 @@ static void print_resources(const Compiler &compiler, const char *tag, const vec
 	for (auto &res : resources)
 	{
 		auto &type = compiler.get_type(res.type_id);
-		auto mask = compiler.get_decoration_mask(res.id);
+		auto &mask = compiler.get_decoration_bitset(res.id);
 
 		if (print_ssbo && compiler.buffer_is_hlsl_counter_buffer(res.id))
 			continue;
@@ -220,8 +221,8 @@ static void print_resources(const Compiler &compiler, const char *tag, const vec
 		// for SSBOs and UBOs since those are the only meaningful names to use externally.
 		// Push constant blocks are still accessed by name and not block name, even though they are technically Blocks.
 		bool is_push_constant = compiler.get_storage_class(res.id) == StorageClassPushConstant;
-		bool is_block = (compiler.get_decoration_mask(type.self) &
-		                 ((1ull << DecorationBlock) | (1ull << DecorationBufferBlock))) != 0;
+		bool is_block = compiler.get_decoration_bitset(type.self).get(DecorationBlock) ||
+		                compiler.get_decoration_bitset(type.self).get(DecorationBufferBlock);
 		bool is_sized_block = is_block && (compiler.get_storage_class(res.id) == StorageClassUniform ||
 		                                   compiler.get_storage_class(res.id) == StorageClassUniformConstant);
 		uint32_t fallback_id = !is_push_constant && is_block ? res.base_type_id : res.id;
@@ -237,17 +238,17 @@ static void print_resources(const Compiler &compiler, const char *tag, const vec
 		fprintf(stderr, " ID %03u : %s%s", res.id,
 		        !res.name.empty() ? res.name.c_str() : compiler.get_fallback_name(fallback_id).c_str(), array.c_str());
 
-		if (mask & (1ull << DecorationLocation))
+		if (mask.get(DecorationLocation))
 			fprintf(stderr, " (Location : %u)", compiler.get_decoration(res.id, DecorationLocation));
-		if (mask & (1ull << DecorationDescriptorSet))
+		if (mask.get(DecorationDescriptorSet))
 			fprintf(stderr, " (Set : %u)", compiler.get_decoration(res.id, DecorationDescriptorSet));
-		if (mask & (1ull << DecorationBinding))
+		if (mask.get(DecorationBinding))
 			fprintf(stderr, " (Binding : %u)", compiler.get_decoration(res.id, DecorationBinding));
-		if (mask & (1ull << DecorationInputAttachmentIndex))
+		if (mask.get(DecorationInputAttachmentIndex))
 			fprintf(stderr, " (Attachment : %u)", compiler.get_decoration(res.id, DecorationInputAttachmentIndex));
-		if (mask & (1ull << DecorationNonReadable))
+		if (mask.get(DecorationNonReadable))
 			fprintf(stderr, " writeonly");
-		if (mask & (1ull << DecorationNonWritable))
+		if (mask.get(DecorationNonWritable))
 			fprintf(stderr, " readonly");
 		if (is_sized_block)
 			fprintf(stderr, " (BlockSize : %u bytes)", block_size);
@@ -283,20 +284,16 @@ static const char *execution_model_to_str(spv::ExecutionModel model)
 
 static void print_resources(const Compiler &compiler, const ShaderResources &res)
 {
-	uint64_t modes = compiler.get_execution_mode_mask();
+	auto &modes = compiler.get_execution_mode_bitset();
 
 	fprintf(stderr, "Entry points:\n");
-	auto entry_points = compiler.get_entry_points();
+	auto entry_points = compiler.get_entry_points_and_stages();
 	for (auto &e : entry_points)
-		fprintf(stderr, "  %s (%s)\n", e.c_str(), execution_model_to_str(compiler.get_entry_point(e).model));
+		fprintf(stderr, "  %s (%s)\n", e.name.c_str(), execution_model_to_str(e.execution_model));
 	fprintf(stderr, "\n");
 
 	fprintf(stderr, "Execution modes:\n");
-	for (unsigned i = 0; i < 64; i++)
-	{
-		if (!(modes & (1ull << i)))
-			continue;
-
+	modes.for_each_bit([&](uint32_t i) {
 		auto mode = static_cast<ExecutionMode>(i);
 		uint32_t arg0 = compiler.get_execution_mode_argument(mode, 0);
 		uint32_t arg1 = compiler.get_execution_mode_argument(mode, 1);
@@ -352,7 +349,7 @@ static void print_resources(const Compiler &compiler, const ShaderResources &res
 		default:
 			break;
 		}
-	}
+	});
 	fprintf(stderr, "\n");
 
 	print_resources(compiler, "subpass inputs", res.subpass_inputs);
@@ -467,8 +464,15 @@ struct CLIArguments
 	vector<InterfaceVariableRename> interface_variable_renames;
 	vector<HLSLVertexAttributeRemap> hlsl_attr_remap;
 	string entry;
+	string entry_stage;
 
-	vector<pair<string, string>> entry_point_rename;
+	struct Rename
+	{
+		string old_name;
+		string new_name;
+		ExecutionModel execution_model;
+	};
+	vector<Rename> entry_point_rename;
 
 	uint32_t iterations = 1;
 	bool cpp = false;
@@ -483,20 +487,41 @@ struct CLIArguments
 
 static void print_help()
 {
-	fprintf(stderr, "Usage: spirv-cross [--output <output path>] [SPIR-V file] [--es] [--no-es] "
-	                "[--version <GLSL version>] [--dump-resources] [--help] [--force-temporary] "
-	                "[--vulkan-semantics] [--flatten-ubo] [--fixup-clipspace] [--flip-vert-y] [--iterations iter] "
-	                "[--cpp] [--cpp-interface-name <name>] "
-	                "[--msl] [--msl-version <MMmmpp>]"
-	                "[--hlsl] [--shader-model] [--hlsl-enable-compat] "
-	                "[--separate-shader-objects]"
-	                "[--pls-in format input-name] [--pls-out format output-name] [--remap source_name target_name "
-	                "components] [--extension ext] [--entry name] [--remove-unused-variables] "
-	                "[--flatten-multidimensional-arrays] [--no-420pack-extension] "
-	                "[--remap-variable-type <variable_name> <new_variable_type>] "
-	                "[--rename-interface-variable <in|out> <location> <new_variable_name>] "
-	                "[--set-hlsl-vertex-input-semantic <location> <semantic>] "
-	                "[--rename-entry-point <old> <new>] "
+	fprintf(stderr, "Usage: spirv-cross\n"
+	                "\t[--output <output path>]\n"
+	                "\t[SPIR-V file]\n"
+	                "\t[--es]\n"
+	                "\t[--no-es]\n"
+	                "\t[--version <GLSL version>]\n"
+	                "\t[--dump-resources]\n"
+	                "\t[--help]\n"
+	                "\t[--force-temporary]\n"
+	                "\t[--vulkan-semantics]\n"
+	                "\t[--flatten-ubo]\n"
+	                "\t[--fixup-clipspace]\n"
+	                "\t[--flip-vert-y]\n"
+	                "\t[--iterations iter]\n"
+	                "\t[--cpp]\n"
+	                "\t[--cpp-interface-name <name>]\n"
+	                "\t[--msl]\n"
+	                "\t[--msl-version <MMmmpp>]\n"
+	                "\t[--hlsl]\n"
+	                "\t[--shader-model]\n"
+	                "\t[--hlsl-enable-compat]\n"
+	                "\t[--separate-shader-objects]\n"
+	                "\t[--pls-in format input-name]\n"
+	                "\t[--pls-out format output-name]\n"
+	                "\t[--remap source_name target_name components]\n"
+	                "\t[--extension ext]\n"
+	                "\t[--entry name]\n"
+	                "\t[--stage <stage (vert, frag, geom, tesc, tese comp)>]\n"
+	                "\t[--remove-unused-variables]\n"
+	                "\t[--flatten-multidimensional-arrays]\n"
+	                "\t[--no-420pack-extension]\n"
+	                "\t[--remap-variable-type <variable_name> <new_variable_type>]\n"
+	                "\t[--rename-interface-variable <in|out> <location> <new_variable_name>]\n"
+	                "\t[--set-hlsl-vertex-input-semantic <location> <semantic>]\n"
+	                "\t[--rename-entry-point <old> <new> <stage>]\n"
 	                "\n");
 }
 
@@ -584,31 +609,22 @@ static PlsFormat pls_format(const char *str)
 		return PlsNone;
 }
 
-void rename_interface_variable(Compiler &compiler, const vector<Resource> &resources,
-                               const InterfaceVariableRename &rename)
+static ExecutionModel stage_to_execution_model(const std::string &stage)
 {
-	for (auto &v : resources)
-	{
-		if (!compiler.has_decoration(v.id, spv::DecorationLocation))
-			continue;
-
-		auto loc = compiler.get_decoration(v.id, spv::DecorationLocation);
-		if (loc != rename.location)
-			continue;
-
-		auto &type = compiler.get_type(v.base_type_id);
-
-		// This is more of a friendly variant. If we need to rename interface variables, we might have to rename
-		// structs as well and make sure all the names match up.
-		if (type.basetype == SPIRType::Struct)
-		{
-			compiler.set_name(v.base_type_id, join("SPIRV_Cross_Interface_Location", rename.location));
-			for (uint32_t i = 0; i < uint32_t(type.member_types.size()); i++)
-				compiler.set_member_name(v.base_type_id, i, join("InterfaceMember", i));
-		}
-
-		compiler.set_name(v.id, rename.variable_name);
-	}
+	if (stage == "vert")
+		return ExecutionModelVertex;
+	else if (stage == "frag")
+		return ExecutionModelFragment;
+	else if (stage == "comp")
+		return ExecutionModelGLCompute;
+	else if (stage == "tesc")
+		return ExecutionModelTessellationControl;
+	else if (stage == "tese")
+		return ExecutionModelTessellationEvaluation;
+	else if (stage == "geom")
+		return ExecutionModelGeometry;
+	else
+		SPIRV_CROSS_THROW("Invalid stage.");
 }
 
 static int main_inner(int argc, char *argv[])
@@ -652,9 +668,11 @@ static int main_inner(int argc, char *argv[])
 	cbs.add("--rename-entry-point", [&args](CLIParser &parser) {
 		auto old_name = parser.next_string();
 		auto new_name = parser.next_string();
-		args.entry_point_rename.push_back({ old_name, new_name });
+		auto model = stage_to_execution_model(parser.next_string());
+		args.entry_point_rename.push_back({ old_name, new_name, move(model) });
 	});
 	cbs.add("--entry", [&args](CLIParser &parser) { args.entry = parser.next_string(); });
+	cbs.add("--stage", [&args](CLIParser &parser) { args.entry_stage = parser.next_string(); });
 	cbs.add("--separate-shader-objects", [&args](CLIParser &) { args.sso = true; });
 	cbs.add("--set-hlsl-vertex-input-semantic", [&args](CLIParser &parser) {
 		HLSLVertexAttributeRemap remap;
@@ -746,10 +764,10 @@ static int main_inner(int argc, char *argv[])
 		compiler = unique_ptr<CompilerMSL>(new CompilerMSL(read_spirv_file(args.input)));
 
 		auto *msl_comp = static_cast<CompilerMSL *>(compiler.get());
-		auto msl_opts = msl_comp->get_options();
+		auto msl_opts = msl_comp->get_msl_options();
 		if (args.set_msl_version)
 			msl_opts.msl_version = args.msl_version;
-		msl_comp->set_options(msl_opts);
+		msl_comp->set_msl_options(msl_opts);
 	}
 	else if (args.hlsl)
 		compiler = unique_ptr<CompilerHLSL>(new CompilerHLSL(read_spirv_file(args.input)));
@@ -772,19 +790,91 @@ static int main_inner(int argc, char *argv[])
 	}
 
 	for (auto &rename : args.entry_point_rename)
-		compiler->rename_entry_point(rename.first, rename.second);
+		compiler->rename_entry_point(rename.old_name, rename.new_name, rename.execution_model);
 
-	if (!args.entry.empty())
-		compiler->set_entry_point(args.entry);
+	auto entry_points = compiler->get_entry_points_and_stages();
+	auto entry_point = args.entry;
+	ExecutionModel model = ExecutionModelMax;
 
-	if (!args.set_version && !compiler->get_options().version)
+	if (!args.entry_stage.empty())
+	{
+		model = stage_to_execution_model(args.entry_stage);
+		if (entry_point.empty())
+		{
+			// Just use the first entry point with this stage.
+			for (auto &e : entry_points)
+			{
+				if (e.execution_model == model)
+				{
+					entry_point = e.name;
+					break;
+				}
+			}
+
+			if (entry_point.empty())
+			{
+				fprintf(stderr, "Could not find an entry point with stage: %s\n", args.entry_stage.c_str());
+				return EXIT_FAILURE;
+			}
+		}
+		else
+		{
+			// Make sure both stage and name exists.
+			bool exists = false;
+			for (auto &e : entry_points)
+			{
+				if (e.execution_model == model && e.name == entry_point)
+				{
+					exists = true;
+					break;
+				}
+			}
+
+			if (!exists)
+			{
+				fprintf(stderr, "Could not find an entry point %s with stage: %s\n", entry_point.c_str(),
+				        args.entry_stage.c_str());
+				return EXIT_FAILURE;
+			}
+		}
+	}
+	else if (!entry_point.empty())
+	{
+		// Make sure there is just one entry point with this name, or the stage
+		// is ambiguous.
+		uint32_t stage_count = 0;
+		for (auto &e : entry_points)
+		{
+			if (e.name == entry_point)
+			{
+				stage_count++;
+				model = e.execution_model;
+			}
+		}
+
+		if (stage_count == 0)
+		{
+			fprintf(stderr, "There is no entry point with name: %s\n", entry_point.c_str());
+			return EXIT_FAILURE;
+		}
+		else if (stage_count > 1)
+		{
+			fprintf(stderr, "There is more than one entry point with name: %s. Use --stage.\n", entry_point.c_str());
+			return EXIT_FAILURE;
+		}
+	}
+
+	if (!entry_point.empty())
+		compiler->set_entry_point(entry_point, model);
+
+	if (!args.set_version && !compiler->get_common_options().version)
 	{
 		fprintf(stderr, "Didn't specify GLSL version and SPIR-V did not specify language.\n");
 		print_help();
 		return EXIT_FAILURE;
 	}
 
-	CompilerGLSL::Options opts = compiler->get_options();
+	CompilerGLSL::Options opts = compiler->get_common_options();
 	if (args.set_version)
 		opts.version = args.version;
 	if (args.set_es)
@@ -796,13 +886,13 @@ static int main_inner(int argc, char *argv[])
 	opts.vulkan_semantics = args.vulkan_semantics;
 	opts.vertex.fixup_clipspace = args.fixup;
 	opts.vertex.flip_vert_y = args.yflip;
-	compiler->set_options(opts);
+	compiler->set_common_options(opts);
 
 	// Set HLSL specific options.
 	if (args.hlsl)
 	{
 		auto *hlsl = static_cast<CompilerHLSL *>(compiler.get());
-		auto hlsl_opts = hlsl->get_options();
+		auto hlsl_opts = hlsl->get_hlsl_options();
 		if (args.set_shader_model)
 		{
 			if (args.shader_model < 30)
@@ -818,12 +908,21 @@ static int main_inner(int argc, char *argv[])
 		{
 			// Enable all compat options.
 			hlsl_opts.point_size_compat = true;
+			hlsl_opts.point_coord_compat = true;
 		}
-		hlsl->set_options(hlsl_opts);
+		hlsl->set_hlsl_options(hlsl_opts);
 	}
 
 	if (build_dummy_sampler)
-		compiler->build_dummy_sampler_for_combined_images();
+	{
+		uint32_t sampler = compiler->build_dummy_sampler_for_combined_images();
+		if (sampler != 0)
+		{
+			// Set some defaults to make validation happy.
+			compiler->set_decoration(sampler, DecorationDescriptorSet, 0);
+			compiler->set_decoration(sampler, DecorationBinding, 0);
+		}
+	}
 
 	ShaderResources res;
 	if (args.remove_unused)
@@ -863,9 +962,11 @@ static int main_inner(int argc, char *argv[])
 	for (auto &rename : args.interface_variable_renames)
 	{
 		if (rename.storageClass == StorageClassInput)
-			rename_interface_variable(*compiler, res.stage_inputs, rename);
+			spirv_cross_util::rename_interface_variable(*compiler, res.stage_inputs, rename.location,
+			                                            rename.variable_name);
 		else if (rename.storageClass == StorageClassOutput)
-			rename_interface_variable(*compiler, res.stage_outputs, rename);
+			spirv_cross_util::rename_interface_variable(*compiler, res.stage_outputs, rename.location,
+			                                            rename.variable_name);
 		else
 		{
 			fprintf(stderr, "error at --rename-interface-variable <in|out> ...\n");

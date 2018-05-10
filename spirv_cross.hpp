@@ -108,6 +108,12 @@ enum BufferPackingStandard
 	BufferPackingHLSLCbufferPackOffset
 };
 
+struct EntryPoint
+{
+	std::string name;
+	spv::ExecutionModel execution_model;
+};
+
 class Compiler
 {
 public:
@@ -130,6 +136,7 @@ public:
 
 	// Applies a decoration to an ID. Effectively injects OpDecorate.
 	void set_decoration(uint32_t id, spv::Decoration decoration, uint32_t argument = 0);
+	void set_decoration_string(uint32_t id, spv::Decoration decoration, const std::string &argument);
 
 	// Overrides the identifier OpName of an ID.
 	// Identifiers beginning with underscores or identifiers which contain double underscores
@@ -138,7 +145,9 @@ public:
 
 	// Gets a bitmask for the decorations which are applied to ID.
 	// I.e. (1ull << spv::DecorationFoo) | (1ull << spv::DecorationBar)
+	SPIRV_CROSS_DEPRECATED("Please use get_decoration_bitset instead.")
 	uint64_t get_decoration_mask(uint32_t id) const;
+	const Bitset &get_decoration_bitset(uint32_t id) const;
 
 	// Returns whether the decoration has been applied to the ID.
 	bool has_decoration(uint32_t id, spv::Decoration decoration) const;
@@ -149,6 +158,7 @@ public:
 	// If decoration doesn't exist or decoration is not recognized,
 	// 0 will be returned.
 	uint32_t get_decoration(uint32_t id, spv::Decoration decoration) const;
+	const std::string &get_decoration_string(uint32_t id, spv::Decoration decoration) const;
 
 	// Removes the decoration for a an ID.
 	void unset_decoration(uint32_t id, spv::Decoration decoration);
@@ -177,6 +187,7 @@ public:
 
 	// Given an OpTypeStruct in ID, obtain the OpMemberDecoration for member number "index".
 	uint32_t get_member_decoration(uint32_t id, uint32_t index, spv::Decoration decoration) const;
+	const std::string &get_member_decoration_string(uint32_t id, uint32_t index, spv::Decoration decoration) const;
 
 	// Sets the member identifier for OpTypeStruct ID, member number "index".
 	void set_member_name(uint32_t id, uint32_t index, const std::string &name);
@@ -189,13 +200,17 @@ public:
 	void set_member_qualified_name(uint32_t type_id, uint32_t index, const std::string &name);
 
 	// Gets the decoration mask for a member of a struct, similar to get_decoration_mask.
+	SPIRV_CROSS_DEPRECATED("Please use get_member_decoration_bitset instead.")
 	uint64_t get_member_decoration_mask(uint32_t id, uint32_t index) const;
+	const Bitset &get_member_decoration_bitset(uint32_t id, uint32_t index) const;
 
 	// Returns whether the decoration has been applied to a member of a struct.
 	bool has_member_decoration(uint32_t id, uint32_t index, spv::Decoration decoration) const;
 
 	// Similar to set_decoration, but for struct members.
 	void set_member_decoration(uint32_t id, uint32_t index, spv::Decoration decoration, uint32_t argument = 0);
+	void set_member_decoration_string(uint32_t id, uint32_t index, spv::Decoration decoration,
+	                                  const std::string &argument);
 
 	// Unsets a member decoration, similar to unset_decoration.
 	void unset_member_decoration(uint32_t id, uint32_t index, spv::Decoration decoration);
@@ -261,17 +276,23 @@ public:
 	// Entry points should be set right after the constructor completes as some reflection functions traverse the graph from the entry point.
 	// Resource reflection also depends on the entry point.
 	// By default, the current entry point is set to the first OpEntryPoint which appears in the SPIR-V module.
+	SPIRV_CROSS_DEPRECATED("Please use get_entry_points_and_stages instead.")
 	std::vector<std::string> get_entry_points() const;
+	SPIRV_CROSS_DEPRECATED("Please use set_entry_point(const std::string &, spv::ExecutionModel) instead.")
 	void set_entry_point(const std::string &name);
 
 	// Renames an entry point from old_name to new_name.
 	// If old_name is currently selected as the current entry point, it will continue to be the current entry point,
 	// albeit with a new name.
 	// get_entry_points() is essentially invalidated at this point.
+	SPIRV_CROSS_DEPRECATED(
+	    "Please use rename_entry_point(const std::string&, const std::string&, spv::ExecutionModel) instead.")
 	void rename_entry_point(const std::string &old_name, const std::string &new_name);
 
 	// Returns the internal data structure for entry points to allow poking around.
+	SPIRV_CROSS_DEPRECATED("Please use get_entry_point(const std::string &, spv::ExecutionModel instead.")
 	const SPIREntryPoint &get_entry_point(const std::string &name) const;
+	SPIRV_CROSS_DEPRECATED("Please use get_entry_point(const std::string &, spv::ExecutionModel instead.")
 	SPIREntryPoint &get_entry_point(const std::string &name);
 
 	// Some shader languages restrict the names that can be given to entry points, and the
@@ -282,10 +303,27 @@ public:
 	// the name, as updated by the backend during the call to compile(). If the name is not
 	// illegal, and has not been renamed, or if this function is called before compile(),
 	// this function will simply return the same name.
+	SPIRV_CROSS_DEPRECATED(
+	    "Please use get_cleansed_entry_point_name(const std::string &, spv::ExecutionModel) instead.")
 	const std::string &get_cleansed_entry_point_name(const std::string &name) const;
 
+	// New variants of entry point query and reflection.
+	// Names for entry points in the SPIR-V module may alias if they belong to different execution models.
+	// To disambiguate, we must pass along with the entry point names the execution model.
+	std::vector<EntryPoint> get_entry_points_and_stages() const;
+	void set_entry_point(const std::string &entry, spv::ExecutionModel execution_model);
+	void rename_entry_point(const std::string &old_name, const std::string &new_name,
+	                        spv::ExecutionModel execution_model);
+	const SPIREntryPoint &get_entry_point(const std::string &name, spv::ExecutionModel execution_model) const;
+	SPIREntryPoint &get_entry_point(const std::string &name, spv::ExecutionModel execution_model);
+	const std::string &get_cleansed_entry_point_name(const std::string &name,
+	                                                 spv::ExecutionModel execution_model) const;
+
 	// Query and modify OpExecutionMode.
+	SPIRV_CROSS_DEPRECATED("Please use get_execution_mode_bitset instead.")
 	uint64_t get_execution_mode_mask() const;
+	const Bitset &get_execution_mode_bitset() const;
+
 	void unset_execution_mode(spv::ExecutionMode mode);
 	void set_execution_mode(spv::ExecutionMode mode, uint32_t arg0 = 0, uint32_t arg1 = 0, uint32_t arg2 = 0);
 
@@ -346,6 +384,8 @@ public:
 	// so this can be added before compile() if desired.
 	//
 	// Combined image samplers originating from this set are always considered active variables.
+	// Arrays of separate samplers are not supported, but arrays of separate images are supported.
+	// Array of images + sampler -> Array of combined image samplers.
 	void build_combined_image_samplers();
 
 	// Gets a remapping for the combined image samplers.
@@ -408,14 +448,18 @@ public:
 	// which lets us link the two buffers together.
 
 	// Queries if a variable ID is a counter buffer which "belongs" to a regular buffer object.
-	// NOTE: This query is purely based on OpName identifiers as found in the SPIR-V module, and will
+
+	// If SPV_GOOGLE_hlsl_functionality1 is used, this can be used even with a stripped SPIR-V module.
+	// Otherwise, this query is purely based on OpName identifiers as found in the SPIR-V module, and will
 	// only return true if OpSource was reported HLSL.
 	// To rely on this functionality, ensure that the SPIR-V module is not stripped.
+
 	bool buffer_is_hlsl_counter_buffer(uint32_t id) const;
 
 	// Queries if a buffer object has a neighbor "counter" buffer.
 	// If so, the ID of that counter buffer will be returned in counter_id.
-	// NOTE: This query is purely based on OpName identifiers as found in the SPIR-V module, and will
+	// If SPV_GOOGLE_hlsl_functionality1 is used, this can be used even with a stripped SPIR-V module.
+	// Otherwise, this query is purely based on OpName identifiers as found in the SPIR-V module, and will
 	// only return true if OpSource was reported HLSL.
 	// To rely on this functionality, ensure that the SPIR-V module is not stripped.
 	bool buffer_get_hlsl_counter_buffer(uint32_t id, uint32_t &counter_id) const;
@@ -553,10 +597,21 @@ protected:
 		return continue_blocks.find(next) != end(continue_blocks);
 	}
 
+	inline bool is_single_block_loop(uint32_t next) const
+	{
+		auto &block = get<SPIRBlock>(next);
+		return block.merge == SPIRBlock::MergeLoop && block.continue_block == next;
+	}
+
 	inline bool is_break(uint32_t next) const
 	{
 		return loop_merge_targets.find(next) != end(loop_merge_targets) ||
 		       multiselect_merge_targets.find(next) != end(multiselect_merge_targets);
+	}
+
+	inline bool is_loop_break(uint32_t next) const
+	{
+		return loop_merge_targets.find(next) != end(loop_merge_targets);
 	}
 
 	inline bool is_conditional(uint32_t next) const
@@ -568,6 +623,7 @@ protected:
 	// Dependency tracking for temporaries read from variables.
 	void flush_dependees(SPIRVariable &var);
 	void flush_all_active_variables();
+	void flush_control_dependent_expressions(uint32_t block);
 	void flush_all_atomic_capable_variables();
 	void flush_all_aliased_variables();
 	void register_global_read_dependencies(const SPIRBlock &func, uint32_t id);
@@ -716,7 +772,7 @@ protected:
 		bool handle(spv::Op opcode, const uint32_t *args, uint32_t length) override;
 		Compiler &compiler;
 
-		void handle_builtin(const SPIRType &type, spv::BuiltIn builtin);
+		void handle_builtin(const SPIRType &type, spv::BuiltIn builtin, const Bitset &decoration_flags);
 	};
 
 	bool traverse_all_reachable_opcodes(const SPIRBlock &block, OpcodeHandler &handler) const;
@@ -728,17 +784,18 @@ protected:
 
 	VariableTypeRemapCallback variable_remap_callback;
 
-	uint64_t get_buffer_block_flags(const SPIRVariable &var);
+	Bitset get_buffer_block_flags(const SPIRVariable &var);
 	bool get_common_basic_type(const SPIRType &type, SPIRType::BaseType &base_type);
 
 	std::unordered_set<uint32_t> forced_temporaries;
 	std::unordered_set<uint32_t> forwarded_temporaries;
 	std::unordered_set<uint32_t> hoisted_temporaries;
 
-	uint64_t active_input_builtins = 0;
-	uint64_t active_output_builtins = 0;
+	Bitset active_input_builtins;
+	Bitset active_output_builtins;
 	uint32_t clip_distance_count = 0;
 	uint32_t cull_distance_count = 0;
+	bool position_invariant = false;
 
 	// Traverses all reachable opcodes and sets active_builtins to a bitmask of all builtin variables which are accessed in the shader.
 	void update_active_builtins();
@@ -792,7 +849,15 @@ protected:
 
 	bool instruction_to_result_type(uint32_t &result_type, uint32_t &result_id, spv::Op op, const uint32_t *args,
 	                                uint32_t length);
+
+private:
+	// Used only to implement the old deprecated get_entry_point() interface.
+	const SPIREntryPoint &get_first_entry_point(const std::string &name) const;
+	SPIREntryPoint &get_first_entry_point(const std::string &name);
+
+	void fixup_type_alias();
+	bool type_is_block_like(const SPIRType &type) const;
 };
-}
+} // namespace spirv_cross
 
 #endif

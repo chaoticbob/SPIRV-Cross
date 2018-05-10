@@ -37,17 +37,11 @@ struct main0_out
     float4 gl_Position [[position]];
 };
 
-vertex main0_out main0(main0_in in [[stage_in]], constant _15& _17 [[buffer(0)]], constant _42& _44 [[buffer(1)]])
+vertex main0_out main0(main0_in in [[stage_in]], constant _42& _44 [[buffer(12)]], constant _15& _17 [[buffer(13)]])
 {
     main0_out out = {};
-    float3 _34;
-    do
-    {
-        _34 = normalize(float4(in.m_25.xyz, 0.0) * _17._m1);
-        break;
-    } while (false);
     float4 _70 = _44._m0 * float4(_44._m3 + (in.m_25.xyz * (_44._m6 + _44._m7)), 1.0);
-    out.m_72 = _34;
+    out.m_72 = normalize(float4(in.m_25.xyz, 0.0) * _17._m1);
     float4 _95 = _70;
     _95.y = -_70.y;
     out.gl_Position = _95;
